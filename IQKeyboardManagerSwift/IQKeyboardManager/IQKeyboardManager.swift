@@ -128,6 +128,7 @@ Code-less drop-in universal library allows to prevent issues of keyboard sliding
               activeConfiguration.isReady else {
                 return
         }
+        print("DEBUG::: - updates needed!!!")
         adjustPosition()
     }
 }
