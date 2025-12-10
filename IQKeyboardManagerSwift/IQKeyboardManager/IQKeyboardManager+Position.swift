@@ -134,13 +134,12 @@ import IQKeyboardCore
         guard !keyboardIntersection.isNull else {
             showLog("Keyboard does not intersect with root view, skipping adjustment")
             // Reset to original position if needed
-            if let rootBeginOrigin = rootConfiguration.beginOrigin,
-               rootController.view.frame.origin != rootBeginOrigin {
+            if rootController.view.frame.origin != rootConfiguration.beginOrigin {
                 adjustRootController(moveUp: 0,
                                     rootViewOrigin: rootController.view.frame.origin,
                                     originalKbSize: keyboardFrame.size,
                                     rootController: rootController,
-                                    rootBeginOrigin: rootBeginOrigin)
+                                    rootBeginOrigin: rootConfiguration.beginOrigin)
             }
             return
         }
