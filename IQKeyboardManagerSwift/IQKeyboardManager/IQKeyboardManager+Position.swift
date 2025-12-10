@@ -123,42 +123,28 @@ import IQKeyboardCore
             showLog("<<<<< \(#function) ended <<<<<", indentation: -1)
         }
 
-        // MARK: - Calculate root view's actual frame in window coordinates for half-screen support
-        let rootViewFrameInWindow = rootController.view.convert(rootController.view.bounds, to: window)
-        
-        // MARK: - Check if keyboard actually intersects with our view
-        let keyboardFrame = activeConfiguration.keyboardInfo.endFrame
-        let keyboardIntersection = rootViewFrameInWindow.intersection(keyboardFrame)
-        
-        // If keyboard doesn't intersect with our view at all, reset and return
-        guard !keyboardIntersection.isNull else {
-            showLog("Keyboard does not intersect with root view, skipping adjustment")
-            // Reset to original position if needed
-            if rootController.view.frame.origin != rootConfiguration.beginOrigin {
-                adjustRootController(moveUp: 0,
-                                    rootViewOrigin: rootController.view.frame.origin,
-                                    originalKbSize: keyboardFrame.size,
-                                    rootController: rootController,
-                                    rootBeginOrigin: rootConfiguration.beginOrigin)
-            }
-            return
-        }
-
         let textInputViewRectInWindow: CGRect = superview.convert(textInputView.frame, to: window)
-        let textInputViewRectInRootSuperview: CGRect = superview.convert(textInputView.frame,
-                                                                         to: rootController.view.superview)
+        let textInputViewRectInRootSuperview: CGRect = {
+            // For modal presentations, rootController.view.superview can be nil or point to an incorrect coordinate space
+            // Convert to window coordinates and then to rootController.view coordinates to ensure proper positioning
+            if let rootSuperview = rootController.view.superview {
+                return superview.convert(textInputView.frame, to: rootSuperview)
+            } else {
+                // When superview is nil (common in modal presentations), convert to window then to root view
+                let rectInWindow = superview.convert(textInputView.frame, to: window)
+                return window.convert(rectInWindow, to: rootController.view)
+            }
+        }()
 
         //  Getting RootViewOrigin.
         let rootViewOrigin: CGPoint = rootController.view.frame.origin
 
         let keyboardDistance: CGFloat = getSpecialTextInputViewDistance(textInputView: textInputView)
 
-        // MARK: - Use effective keyboard size based on intersection with root view
         let kbSize: CGSize = Self.getKeyboardSize(keyboardDistance: keyboardDistance,
                                                   keyboardFrame: activeConfiguration.keyboardInfo.endFrame,
                                                   safeAreaInsets: rootConfiguration.beginSafeAreaInsets,
-                                                  windowFrame: window.frame,
-                                                  rootViewFrameInWindow: rootViewFrameInWindow)
+                                                  windowFrame: window.frame)
         let originalKbSize: CGSize = activeConfiguration.keyboardInfo.endFrame.size
 
         let isScrollableTextInputView: Bool
@@ -169,22 +155,17 @@ import IQKeyboardCore
             isScrollableTextInputView = false
         }
 
-        // MARK: - Use root view frame for layout guide calculations
-        let layoutGuide: IQLayoutGuide = Self.getLayoutGuides(rootController: rootController,
-                                                              window: window,
-                                                              isScrollableTextInputView: isScrollableTextInputView,
-                                                              rootViewFrameInWindow: rootViewFrameInWindow)
+        let layoutGuide: IQLayoutGuide = Self.getLayoutGuides(rootController: rootController, window: window,
+                                                              isScrollableTextInputView: isScrollableTextInputView)
 
         //  Move positive = textInputView is hidden.
         //  Move negative = textInputView is showing.
         //  Calculating move position.
-        // MARK: - Use root view frame instead of window frame for move distance calculation
         var moveUp: CGFloat = Self.getMoveUpDistance(keyboardSize: kbSize,
                                                      layoutGuide: layoutGuide,
                                                      textInputViewRectInRootSuperview: textInputViewRectInRootSuperview,
                                                      textInputViewRectInWindow: textInputViewRectInWindow,
-                                                     windowFrame: window.frame,
-                                                     rootViewFrameInWindow: rootViewFrameInWindow)
+                                                     windowFrame: window.frame)
 
         showLog("Need to move: \(moveUp), will be moving \(moveUp < 0 ? "down" : "up")")
 
@@ -214,8 +195,7 @@ import IQKeyboardCore
                                            textInputViewRectInRootSuperview: textInputViewRectInRootSuperview,
                                            isScrollableTextInputView: isScrollableTextInputView, window: window,
                                            kbSize: kbSize, keyboardDistance: keyboardDistance,
-                                           rootBeginSafeAreaInsets: rootConfiguration.beginSafeAreaInsets,
-                                           rootViewFrameInWindow: rootViewFrameInWindow)
+                                           rootBeginSafeAreaInsets: rootConfiguration.beginSafeAreaInsets)
         }
 
         // Special case for UITextView
@@ -227,8 +207,7 @@ import IQKeyboardCore
             adjustTextInputViewContentInset(window: window, originalKbSize: originalKbSize,
                                             rootSuperview: rootController.view.superview,
                                             layoutGuide: layoutGuide,
-                                            textInputView: textInputView,
-                                            rootViewFrameInWindow: rootViewFrameInWindow)
+                                            textInputView: textInputView)
         }
 
         adjustRootController(moveUp: moveUp, rootViewOrigin: rootViewOrigin, originalKbSize: originalKbSize,
@@ -301,10 +280,8 @@ private extension IQKeyboardManager {
         }
     }
 
-    // MARK: - Updated to handle half-screen scenarios
     static func getKeyboardSize(keyboardDistance: CGFloat, keyboardFrame: CGRect,
-                                safeAreaInsets: UIEdgeInsets, windowFrame: CGRect,
-                                rootViewFrameInWindow: CGRect? = nil) -> CGSize {
+                                safeAreaInsets: UIEdgeInsets, windowFrame: CGRect) -> CGSize {
         let kbSize: CGSize
         var kbFrame: CGRect = keyboardFrame
 
@@ -314,13 +291,10 @@ private extension IQKeyboardManager {
         kbFrame.origin.y -= safeAreaInsets.bottom
         kbFrame.size.height += safeAreaInsets.bottom
 
-        // Use rootViewFrameInWindow if provided (for half-screen support), otherwise use windowFrame
-        let effectiveFrame = rootViewFrameInWindow ?? windowFrame
-        
         // (Bug ID: #469) (Bug ID: #381) (Bug ID: #1506)
-        // Calculating actual keyboard covered size respect to the effective container,
+        // Calculating actual keyboard covered size respect to window,
         // keyboard frame may be different when hardware keyboard is attached
-        let intersectRect: CGRect = kbFrame.intersection(effectiveFrame)
+        let intersectRect: CGRect = kbFrame.intersection(windowFrame)
 
         if intersectRect.isNull {
             kbSize = CGSize(width: kbFrame.size.width, height: 0)
@@ -330,10 +304,8 @@ private extension IQKeyboardManager {
         return kbSize
     }
 
-    // MARK: - Updated to handle half-screen scenarios
     static private func getLayoutGuides(rootController: UIViewController, window: UIWindow,
-                                        isScrollableTextInputView: Bool,
-                                        rootViewFrameInWindow: CGRect? = nil) -> IQLayoutGuide {
+                                        isScrollableTextInputView: Bool) -> IQLayoutGuide {
         let navigationBarAreaHeight: CGFloat
         if let navigationController: UINavigationController = rootController.navigationController {
             navigationBarAreaHeight = navigationController.navigationBar.frame.maxY
@@ -343,20 +315,7 @@ private extension IQKeyboardManager {
         }
 
         let directionalLayoutMargin: NSDirectionalEdgeInsets = rootController.view.directionalLayoutMargins
-        
-        // For half-screen views, adjust the top layout guide relative to container position
-        var topLayoutGuide: CGFloat = CGFloat.maximum(navigationBarAreaHeight, directionalLayoutMargin.top)
-        
-        if let rootViewFrameInWindow = rootViewFrameInWindow {
-            // If the root view doesn't start at the top of the window,
-            // we need to account for its position
-            let rootViewTopInWindow = rootViewFrameInWindow.minY
-            if rootViewTopInWindow > navigationBarAreaHeight {
-                // The root view starts below the navigation bar area,
-                // so we only need to account for the layout margin
-                topLayoutGuide = directionalLayoutMargin.top
-            }
-        }
+        let topLayoutGuide: CGFloat = CGFloat.maximum(navigationBarAreaHeight, directionalLayoutMargin.top)
 
         // Validation of textInputView for case where there is a tab bar
         // at the bottom or running on iPhone X and textInputView is at the bottom.
@@ -364,25 +323,18 @@ private extension IQKeyboardManager {
         return (topLayoutGuide, bottomLayoutGuide)
     }
 
-    // MARK: - Updated to handle half-screen scenarios
     static private func getMoveUpDistance(keyboardSize: CGSize,
                                           layoutGuide: IQLayoutGuide,
                                           textInputViewRectInRootSuperview: CGRect,
                                           textInputViewRectInWindow: CGRect,
-                                          windowFrame: CGRect,
-                                          rootViewFrameInWindow: CGRect? = nil) -> CGFloat {
+                                          windowFrame: CGRect) -> CGFloat {
 
         //  Move positive = textInputView is hidden.
         //  Move negative = textInputView is showing.
         //  Calculating move position.
-        
-        // Use rootViewFrameInWindow if provided (for half-screen support), otherwise use windowFrame
-        let effectiveFrame = rootViewFrameInWindow ?? windowFrame
-        
-        // Calculate the visible height relative to the effective container
-        let visibleHeight: CGFloat = effectiveFrame.maxY - keyboardSize.height
+        let visibleHeight: CGFloat = windowFrame.height-keyboardSize.height
 
-        let topMovement: CGFloat = textInputViewRectInRootSuperview.minY - layoutGuide.top
+        let topMovement: CGFloat = textInputViewRectInRootSuperview.minY-layoutGuide.top
         let bottomMovement: CGFloat = textInputViewRectInWindow.maxY - visibleHeight + layoutGuide.bottom
         var moveUp: CGFloat = CGFloat.minimum(topMovement, bottomMovement)
         moveUp = CGFloat(Int(moveUp))
@@ -449,7 +401,6 @@ private extension IQKeyboardManager {
         })
     }
 
-    // MARK: - Updated to handle half-screen scenarios
     // swiftlint:disable function_body_length
     private func adjustScrollViewContentOffsets(moveUp: inout CGFloat, textInputView: some IQTextInputView,
                                                 lastScrollViewConfiguration: IQScrollViewConfiguration,
@@ -458,8 +409,7 @@ private extension IQKeyboardManager {
                                                 textInputViewRectInRootSuperview: CGRect,
                                                 isScrollableTextInputView: Bool, window: UIWindow,
                                                 kbSize: CGSize, keyboardDistance: CGFloat,
-                                                rootBeginSafeAreaInsets: UIEdgeInsets,
-                                                rootViewFrameInWindow: CGRect? = nil) {
+                                                rootBeginSafeAreaInsets: UIEdgeInsets) {
         // Saving
         var lastView: UIView = textInputView
         var superScrollView: UIScrollView? = lastScrollViewConfiguration.scrollView
@@ -521,11 +471,10 @@ private extension IQKeyboardManager {
                     suggestedOffsetY = CGFloat.minimum(suggestedOffsetY, lastViewRect.minY)
 
                     updateSuggestedOffsetYAndMoveUp(suggestedOffsetY: &suggestedOffsetY, moveUp: &moveUp,
-                                                   isScrollableTextInputView: isScrollableTextInputView,
-                                                   nextScrollView: nextScrollView, textInputView: textInputView,
-                                                   window: window, layoutGuide: layoutGuide,
-                                                   scrollViewContentOffset: scrollView.contentOffset,
-                                                   rootViewFrameInWindow: rootViewFrameInWindow)
+                                                    isScrollableTextInputView: isScrollableTextInputView,
+                                                    nextScrollView: nextScrollView, textInputView: textInputView,
+                                                    window: window, layoutGuide: layoutGuide,
+                                                    scrollViewContentOffset: scrollView.contentOffset)
 
                     let newContentOffset: CGPoint = CGPoint(x: scrollView.contentOffset.x, y: suggestedOffsetY)
 
@@ -547,8 +496,7 @@ private extension IQKeyboardManager {
 
         adjustScrollViewContentInset(lastScrollViewConfiguration: lastScrollViewConfiguration, window: window,
                                      kbSize: kbSize, keyboardDistance: keyboardDistance,
-                                     rootBeginSafeAreaInsets: rootBeginSafeAreaInsets,
-                                     rootViewFrameInWindow: rootViewFrameInWindow)
+                                     rootBeginSafeAreaInsets: rootBeginSafeAreaInsets)
     }
     // swiftlint:enable function_body_length
 
@@ -587,13 +535,11 @@ private extension IQKeyboardManager {
         moveUp = CGFloat.minimum(0, previousCellRectInRootSuperview.maxY - layoutGuide.top)
     }
 
-    // MARK: - Updated to handle half-screen scenarios
     private func updateSuggestedOffsetYAndMoveUp(suggestedOffsetY: inout CGFloat, moveUp: inout CGFloat,
                                                  isScrollableTextInputView: Bool, nextScrollView: UIScrollView?,
                                                  textInputView: some IQTextInputView, window: UIWindow,
                                                  layoutGuide: IQLayoutGuide,
-                                                 scrollViewContentOffset: CGPoint,
-                                                 rootViewFrameInWindow: CGRect? = nil) {
+                                                 scrollViewContentOffset: CGPoint) {
         // If is a UITextView type
         // nextScrollView == nil
         // If processing scrollView is last scrollView in upper hierarchy
@@ -614,14 +560,8 @@ private extension IQKeyboardManager {
         let currentTextInputViewRect: CGRect = superview.convert(textInputView.frame,
                                                                  to: window)
 
-        // For half-screen views, adjust the layout guide top relative to container position
-        var effectiveTopGuide = layoutGuide.top
-        if let rootViewFrameInWindow = rootViewFrameInWindow {
-            effectiveTopGuide = rootViewFrameInWindow.minY + layoutGuide.top
-        }
-
         // Calculating expected fix distance which needs to be managed from navigation bar
-        let expectedFixDistance: CGFloat = currentTextInputViewRect.minY - effectiveTopGuide
+        let expectedFixDistance: CGFloat = currentTextInputViewRect.minY - layoutGuide.top
 
         // Now if expectedOffsetY (scrollView.contentOffset.y + expectedFixDistance)
         // is lower than current suggestedOffsetY, which means we're in a position where
@@ -668,22 +608,17 @@ private extension IQKeyboardManager {
         })
     }
 
-    // MARK: - Updated to handle half-screen scenarios
     func adjustScrollViewContentInset(lastScrollViewConfiguration: IQScrollViewConfiguration,
                                       window: UIWindow, kbSize: CGSize, keyboardDistance: CGFloat,
-                                      rootBeginSafeAreaInsets: UIEdgeInsets,
-                                      rootViewFrameInWindow: CGRect? = nil) {
+                                      rootBeginSafeAreaInsets: UIEdgeInsets) {
 
         let lastScrollView = lastScrollViewConfiguration.scrollView
 
         guard let lastScrollViewRect: CGRect = lastScrollView.superview?.convert(lastScrollView.frame, to: window),
               !lastScrollView.iq.ignoreContentInsetAdjustment else { return }
 
-        // Use rootViewFrameInWindow if provided (for half-screen support), otherwise use window frame
-        let effectiveContainerFrame = rootViewFrameInWindow ?? window.frame
-        
-        // Updating contentInset - calculate relative to the effective container
-        var bottomInset: CGFloat = (kbSize.height) - (effectiveContainerFrame.maxY - lastScrollViewRect.maxY)
+        // Updating contentInset
+        var bottomInset: CGFloat = (kbSize.height)-(window.frame.height-lastScrollViewRect.maxY)
         let keyboardAndSafeArea: CGFloat = keyboardDistance + rootBeginSafeAreaInsets.bottom
         var bottomScrollIndicatorInset: CGFloat = bottomInset - keyboardAndSafeArea
 
@@ -716,32 +651,22 @@ private extension IQKeyboardManager {
         })
     }
 
-    // MARK: - Updated to handle half-screen scenarios
     private func adjustTextInputViewContentInset(window: UIWindow, originalKbSize: CGSize,
                                                  rootSuperview: UIView?,
                                                  layoutGuide: IQLayoutGuide,
-                                                 textInputView: UIScrollView,
-                                                 rootViewFrameInWindow: CGRect? = nil) {
+                                                 textInputView: UIScrollView) {
         let keyboardYPosition: CGFloat = window.frame.height - originalKbSize.height
         var rootSuperViewFrameInWindow: CGRect = window.frame
         if let rootSuperview: UIView = rootSuperview {
             rootSuperViewFrameInWindow = rootSuperview.convert(rootSuperview.bounds, to: window)
         }
-        
-        // For half-screen views, use the container frame if provided
-        if let rootViewFrameInWindow = rootViewFrameInWindow {
-            rootSuperViewFrameInWindow = rootViewFrameInWindow
-        }
 
         let keyboardOverlapping: CGFloat = rootSuperViewFrameInWindow.maxY - keyboardYPosition
 
-        // If keyboard doesn't overlap with our container, no adjustment needed
-        guard keyboardOverlapping > 0 else { return }
-
-        let availableHeight: CGFloat = rootSuperViewFrameInWindow.height - layoutGuide.top - keyboardOverlapping
+        let availableHeight: CGFloat = rootSuperViewFrameInWindow.height-layoutGuide.top-keyboardOverlapping
         let textInputViewHeight: CGFloat = CGFloat.minimum(textInputView.frame.height, availableHeight)
 
-        guard textInputView.frame.size.height - textInputView.contentInset.bottom > textInputViewHeight else { return }
+        guard textInputView.frame.size.height-textInputView.contentInset.bottom>textInputViewHeight else { return }
         // If frame is not change by library in past, then saving user textInputView properties  (Bug ID: #92)
         if startingTextViewConfiguration == nil {
             startingTextViewConfiguration = IQScrollViewConfiguration(scrollView: textInputView,
@@ -749,7 +674,7 @@ private extension IQKeyboardManager {
         }
 
         var newContentInset: UIEdgeInsets = textInputView.contentInset
-        newContentInset.bottom = textInputView.frame.size.height - textInputViewHeight
+        newContentInset.bottom = textInputView.frame.size.height-textInputViewHeight
         newContentInset.bottom -= textInputView.safeAreaInsets.bottom
 
         guard textInputView.contentInset != newContentInset else { return }
